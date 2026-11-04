@@ -74,3 +74,13 @@ html, body { margin: 0; height: 100%; background: var(--chat-bg); color: var(--c
 .composer .composer-input.rz-textarea:focus,
 .composer .composer-input.rz-textarea:focus-visible { border: 0; box-shadow: none; outline: none; background: transparent; }
 .composer:focus-within { border-color: var(--chat-muted); }
+
+/* Typing indicator while a reply is pending (US-4). */
+.typing { max-width: 768px; margin: -1rem auto 1.5rem; padding: 0 1.25rem; box-sizing: border-box;
+  font-size: .9rem; color: var(--chat-muted); }
+.typing .dots::after { content: "…"; display: inline-block; animation: typing-dots 1.2s steps(4, end) infinite;
+  overflow: hidden; vertical-align: bottom; width: 0; }
+@keyframes typing-dots { to { width: 1.1em; } }
+@media (prefers-reduced-motion: reduce) {
+  .typing .dots::after { animation: none; width: auto; }
+}

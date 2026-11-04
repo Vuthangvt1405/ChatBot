@@ -7,7 +7,7 @@ Source: [chat-web-ui.md](../chat-web-ui.md)
 | [US-1](US-1-send-and-receive.md) | Must | Send a message and see the reply | Implemented |
 | [US-2](US-2-continue-conversation.md) | Must | Keep chatting in the same conversation | Implemented |
 | [US-3](US-3-input-validation.md) | Must | Block invalid messages | Implemented |
-| [US-4](US-4-loading-indicator.md) | Should | Show that the assistant is working | Drafted, to confirm |
+| [US-4](US-4-loading-indicator.md) | Should | Show that the assistant is working | Confirmed, scaffolded |
 | [US-5](US-5-restore-after-reload.md) | Should | Keep the conversation after reloading | Drafted, to confirm |
 | [US-6](US-6-error-feedback.md) | Must | Clear feedback on failure | Drafted, to confirm |
 | [US-7](US-7-new-chat.md) | Should | Start a new chat | Drafted, to confirm |

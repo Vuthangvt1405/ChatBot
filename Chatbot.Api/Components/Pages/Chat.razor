@@ -1,6 +1,7 @@
 @page "/"
 @inject IChatService ChatService
 @inject IJSRuntime JS
+@inject ILogger<Chat> Logger
 
 <PageTitle>Chatbot</PageTitle>
 
@@ -23,6 +24,10 @@
                 </li>
             }
         </ol>
+
+        @* TODO(AC1, AC6, G1): while Sending, render
+           <div id="typing-indicator" class="typing" role="status">Assistant is typing<span class="dots"></span></div>
+           here, after #messages (not inside it). *@
     </div>
 
     <div class="composer-wrap">
@@ -59,6 +64,13 @@
     private ElementReference _scroll;
     private Guid? _conversationId; // always the id from the latest reply (US-2 BR-1)
     private bool _scrollPending;
+
+    /// <summary>US-4: true while a request is in flight. Drives the typing indicator and blocks a second send.</summary>
+    private bool Sending { get; set; }
+    // TODO(AC2, AC5, SEC1, G2, S1): add !Sending to CanSend; set Sending = true in SendAsync before the first await.
+    // TODO(AC3, SEC2, G3): wrap the send in try/catch/finally; finally resets Sending, catch logs via Logger.
+    // TODO(SEC3, S2): log the exception and conversation id only, never the message text; show no exception text.
+    // TODO(AC7, G4): on success, clear _text only if _text.Trim() still equals the sent message.
 
     // US-3: length is measured on the trimmed text, which is what gets sent (BR-1).
     private int Length => _text.Trim().Length;
