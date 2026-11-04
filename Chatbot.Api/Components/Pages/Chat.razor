@@ -1,0 +1,113 @@
+@page "/"
+@inject IChatService ChatService
+@inject IJSRuntime JS
+
+<PageTitle>Chatbot</PageTitle>
+
+<div class="chat">
+    <header class="chat-header">Chatbot</header>
+
+    <div class="chat-scroll" @ref="_scroll">
+        @if (_messages.Count == 0)
+        {
+            <div class="empty">How can I help you today?</div>
+        }
+
+        <ol id="messages" class="messages" aria-live="polite">
+            @foreach (var message in _messages)
+            {
+                @* Razor encodes text, so replies are never rendered as HTML. *@
+                <li class="message @message.Role">
+                    <span class="label">@(message.Role == "user" ? "You" : "Assistant")</span>
+                    <div class="text">@message.Text</div>
+                </li>
+            }
+        </ol>
+    </div>
+
+    <div class="composer-wrap">
+        <form id="chat-form" class="composer" @onsubmit="SendAsync">
+            <RadzenTextArea id="chat-input" Rows="1" class="composer-input"
+                            aria-label="Message" Placeholder="Message Chatbot"
+                            @ref="_input" @bind-Value="_text" Immediate="true"
+                            @onkeydown="OnKeyDownAsync" />
+            <RadzenButton ButtonType="ButtonType.Submit" Icon="arrow_upward" class="send"
+                          Shade="Shade.Darker" ButtonStyle="ButtonStyle.Base" aria-label="Send"
+                          Disabled="@(!CanSend)" />
+        </form>
+        <div class="composer-footer">
+            @if (TooLong)
+            {
+                <p id="chat-error" class="hint-error" role="alert">Message must be @ChatRequest.MaxMessageLength characters or fewer</p>
+            }
+            else
+            {
+                <p class="hint">Enter to send · Shift+Enter for a new line</p>
+            }
+            @if (Length > 0)
+            {
+                <span id="char-count" class="counter@(TooLong ? " over" : "")">@Length / @ChatRequest.MaxMessageLength</span>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly List<ChatLine> _messages = [];
+    private RadzenTextArea? _input;
+    private string _text = "";
+    private ElementReference _scroll;
+    private Guid? _conversationId; // always the id from the latest reply (US-2 BR-1)
+    private bool _scrollPending;
+
+    // US-3: length is measured on the trimmed text, which is what gets sent (BR-1).
+    private int Length => _text.Trim().Length;
+    private bool TooLong => Length > ChatRequest.MaxMessageLength;
+    private bool CanSend => Length > 0 && !TooLong;
+
+    private Task OnKeyDownAsync(KeyboardEventArgs e) =>
+        e.Key == "Enter" && !e.ShiftKey ? SendAsync() : Task.CompletedTask;
+
+    private async Task SendAsync()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+
+        var message = _text.Trim();
+
+        AddMessage("user", message);
+        StateHasChanged();
+
+        var response = await ChatService.SendMessageAsync(
+            new ChatRequest { ConversationId = _conversationId, Message = message },
+            CancellationToken.None);
+
+        _conversationId = response.ConversationId;
+        AddMessage("assistant", response.Reply);
+        _text = "";
+
+        if (_input is not null)
+        {
+            await _input.FocusAsync();
+        }
+    }
+
+    private void AddMessage(string role, string text)
+    {
+        _messages.Add(new ChatLine(role, text));
+        _scrollPending = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_scrollPending)
+        {
+            _scrollPending = false;
+            await JS.InvokeVoidAsync("chatScroll.toBottom", _scroll);
+        }
+    }
+
+    private sealed record ChatLine(string Role, string Text);
+}

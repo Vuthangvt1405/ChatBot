@@ -1,0 +1,20 @@
+@Chatbot.Api_HostAddress = http://localhost:5008
+@conversationId = 00000000-0000-0000-0000-000000000000
+
+GET {{Chatbot.Api_HostAddress}}/health
+Accept: application/json
+
+###
+POST {{Chatbot.Api_HostAddress}}/api/chat
+Content-Type: application/json
+
+{
+  "message": "Hello! What can you do?"
+}
+
+###
+# Replace conversationId with the value returned by the POST above.
+GET {{Chatbot.Api_HostAddress}}/api/chat/{{conversationId}}/messages
+Accept: application/json
+
+###
