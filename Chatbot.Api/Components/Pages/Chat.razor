@@ -9,7 +9,11 @@
     <header class="chat-header">Chatbot</header>
 
     <div class="chat-scroll" @ref="_scroll">
-        @if (_messages.Count == 0)
+        @if (Restoring)
+        {
+            <div id="restore-indicator" class="typing restoring" role="status">Loading conversation<span class="dots"></span></div>
+        }
+        else if (_messages.Count == 0)
         {
             <div class="empty">How can I help you today?</div>
         }
@@ -25,9 +29,10 @@
             }
         </ol>
 
-        @* TODO(AC1, AC6, G1): while Sending, render
-           <div id="typing-indicator" class="typing" role="status">Assistant is typing<span class="dots"></span></div>
-           here, after #messages (not inside it). *@
+        @if (Sending)
+        {
+            <div id="typing-indicator" class="typing" role="status">Assistant is typing<span class="dots"></span></div>
+        }
     </div>
 
     <div class="composer-wrap">
@@ -67,15 +72,14 @@
 
     /// <summary>US-4: true while a request is in flight. Drives the typing indicator and blocks a second send.</summary>
     private bool Sending { get; set; }
-    // TODO(AC2, AC5, SEC1, G2, S1): add !Sending to CanSend; set Sending = true in SendAsync before the first await.
-    // TODO(AC3, SEC2, G3): wrap the send in try/catch/finally; finally resets Sending, catch logs via Logger.
-    // TODO(SEC3, S2): log the exception and conversation id only, never the message text; show no exception text.
-    // TODO(AC7, G4): on success, clear _text only if _text.Trim() still equals the sent message.
+
+    /// <summary>US-5: true while the saved conversation's history is being loaded. Shows the restore indicator and blocks sending.</summary>
+    private bool Restoring { get; set; }
 
     // US-3: length is measured on the trimmed text, which is what gets sent (BR-1).
     private int Length => _text.Trim().Length;
     private bool TooLong => Length > ChatRequest.MaxMessageLength;
-    private bool CanSend => Length > 0 && !TooLong;
+    private bool CanSend => Length > 0 && !TooLong && !Sending && !Restoring;
 
     private Task OnKeyDownAsync(KeyboardEventArgs e) =>
         e.Key == "Enter" && !e.ShiftKey ? SendAsync() : Task.CompletedTask;
@@ -87,18 +91,40 @@
             return;
         }
 
+        // Set before the first await so a second submit is rejected server-side (AC5).
+        Sending = true;
         var message = _text.Trim();
 
         AddMessage("user", message);
         StateHasChanged();
 
-        var response = await ChatService.SendMessageAsync(
-            new ChatRequest { ConversationId = _conversationId, Message = message },
-            CancellationToken.None);
+        try
+        {
+            var response = await ChatService.SendMessageAsync(
+                new ChatRequest { ConversationId = _conversationId, Message = message },
+                CancellationToken.None);
 
-        _conversationId = response.ConversationId;
-        AddMessage("assistant", response.Reply);
-        _text = "";
+            _conversationId = response.ConversationId;
+            AddMessage("assistant", response.Reply);
+
+            // AC7: keep a draft typed while waiting.
+            if (_text.Trim() == message)
+            {
+                _text = "";
+            }
+
+            // US-5 AC1: remember the conversation across reloads. Only the id is stored (BR-1).
+            await JS.InvokeVoidAsync("chatStore.set", response.ConversationId.ToString());
+        }
+        catch (Exception ex)
+        {
+            // Never log the message text or show exception details (SEC3). Error UI is US-6.
+            Logger.LogError(ex, "Chat send failed for conversation {ConversationId}", _conversationId);
+        }
+        finally
+        {
+            Sending = false;
+        }
 
         if (_input is not null)
         {
@@ -112,8 +138,82 @@
         _scrollPending = true;
     }
 
+    /// <summary>
+    /// US-5: restores the saved conversation. Called once from OnAfterRenderAsync(firstRender),
+    /// because localStorage (JS interop) isn't available while the page is prerendered.
+    /// </summary>
+    private async Task RestoreAsync()
+    {
+        Guid id;
+
+        try
+        {
+            var saved = await JS.InvokeAsync<string?>("chatStore.get");
+
+            if (saved is null)
+            {
+                return;
+            }
+
+            // AC7 / SEC2: a tampered value is dropped without touching the service.
+            if (!Guid.TryParse(saved, out id))
+            {
+                await JS.InvokeVoidAsync("chatStore.clear");
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException)
+        {
+            Logger.LogWarning(ex, "Could not read the saved conversation id.");
+            return;
+        }
+
+        // AC5: show the indicator and block sending until the history is in.
+        Restoring = true;
+        StateHasChanged();
+
+        try
+        {
+            var conversation = await ChatService.GetConversationAsync(id, CancellationToken.None);
+
+            if (conversation is null)
+            {
+                // AC4: the conversation is gone; start fresh without an error.
+                await JS.InvokeVoidAsync("chatStore.clear");
+                return;
+            }
+
+            _conversationId = conversation.Id;
+
+            foreach (var message in conversation.Messages)
+            {
+                AddMessage(message.Role, message.Content);
+            }
+        }
+        catch (Exception ex)
+        {
+            // AC6 / D2: keep the saved id so a later reload can recover, and keep sending into it.
+            // Log the id only, never content (SEC4).
+            _conversationId = id;
+            Logger.LogError(ex, "Restoring conversation {ConversationId} failed", id);
+        }
+        finally
+        {
+            Restoring = false;
+            StateHasChanged();
+        }
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender)
+        {
+            // localStorage is only reachable once the circuit is live, not during prerender.
+            // The re-render from RestoreAsync scrolls to the newest message.
+            await RestoreAsync();
+            return;
+        }
+
         if (_scrollPending)
         {
             _scrollPending = false;

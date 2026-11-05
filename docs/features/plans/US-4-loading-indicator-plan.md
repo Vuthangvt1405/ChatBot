@@ -1,6 +1,6 @@
 # Feature Plan: US-4 Show that the assistant is working
 
-Status: Scaffolded — awaiting verification · Source: [US-4](../user-story/US-4-loading-indicator.md) · Date: 2026-11-04
+Status: Implemented — all 18 US-4 tests pass · Source: [US-4](../user-story/US-4-loading-indicator.md) · Date: 2026-11-04
 
 ## 1. Requirement (User Stories & Acceptance Criteria)
 

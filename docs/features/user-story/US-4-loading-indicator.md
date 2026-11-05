@@ -3,7 +3,7 @@
 > Feature: [Chatbot web UI](../chat-web-ui.md) · Stack: Blazor Server page `Components/Pages/Chat.razor` (Radzen), which calls `IChatService` directly
 
 - **Priority:** Should
-- **Status:** AC confirmed 2026-11-04, scaffolded (see [plan](../plans/US-4-loading-indicator-plan.md))
+- **Status:** AC confirmed 2026-11-04, implemented 2026-11-04 (see [plan](../plans/US-4-loading-indicator-plan.md))
 
 **Story:** As a visitor, I want to see that the assistant is working, so that I know to wait and don't send twice.
 

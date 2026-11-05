@@ -81,6 +81,8 @@ html, body { margin: 0; height: 100%; background: var(--chat-bg); color: var(--c
 .typing .dots::after { content: "…"; display: inline-block; animation: typing-dots 1.2s steps(4, end) infinite;
   overflow: hidden; vertical-align: bottom; width: 0; }
 @keyframes typing-dots { to { width: 1.1em; } }
+/* US-5: restore indicator reuses .typing; it sits where the empty-state text would be. */
+.typing.restoring { margin: 28vh auto 0; text-align: center; }
 @media (prefers-reduced-motion: reduce) {
   .typing .dots::after { animation: none; width: auto; }
 }

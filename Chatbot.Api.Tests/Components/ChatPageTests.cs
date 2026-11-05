@@ -408,163 +408,556 @@ public sealed class ChatPageTests : BunitContext
 
     // ---------- US-4 Show that the assistant is working ----------
     // Plan: docs/features/plans/US-4-loading-indicator-plan.md §7
-    // Shared baseline (TODO): render, type "Hello", submit with _chat.Pending unresolved (request in flight).
+    // Baseline: render, type "Hello", submit with the reply unresolved (request in flight).
+
+    private (IRenderedComponent<Chat> Page, TaskCompletionSource<string> Reply, Task Submit) StartPending(string text = "Hello")
+    {
+        var reply = new TaskCompletionSource<string>();
+        _chat.Pending = reply.Task;
+        var page = Render<Chat>();
+        page.Find("#chat-input").Input(text);
+        var submit = page.Find("#chat-form").SubmitAsync();
+        return (page, reply, submit);
+    }
 
     // Group 1 — indicator while waiting (AC1, AC6)
 
     [Fact]
-    public void US4_AC1_WhilePending_TypingIndicatorShown()
+    public async Task US4_AC1_WhilePending_TypingIndicatorShown()
     {
-        // Given the baseline, Then #typing-indicator has "Assistant is typing…" and role="status", and "You: Hello" is listed.
-        // Demonstrates: the visitor sees right away that a reply is coming.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        var indicator = page.Find("#typing-indicator");
+        Assert.Equal("Assistant is typing", indicator.TextContent.Trim());
+        Assert.Equal("status", indicator.GetAttribute("role"));
+        Assert.Equal([("message user", "You", "Hello")], Messages(page));
+
+        reply.SetResult("Hi");
+        await submit;
     }
 
     [Fact]
     public void US4_AC1_Contrast_FreshPage_NoIndicator()
     {
-        // Changed: nothing sent. Expected: no #typing-indicator, 0 requests.
-        // Demonstrates: the indicator isn't shown at rest.
-        Assert.Fail("TODO: not implemented");
+        var page = Render<Chat>();
+
+        Assert.Empty(page.FindAll("#typing-indicator"));
+        Assert.Empty(_chat.Requests);
     }
 
     [Fact]
-    public void US4_AC1_Contrast_BlockedSend_NoIndicator()
+    public async Task US4_AC1_Contrast_BlockedSend_NoIndicator()
     {
-        // Changed: text is "   " (US-3). Expected: no indicator, 0 requests.
-        // Demonstrates: a send blocked by validation never looks in flight.
-        Assert.Fail("TODO: not implemented");
+        var page = Render<Chat>();
+
+        await SendAsync(page, "   ");
+
+        Assert.Empty(page.FindAll("#typing-indicator"));
+        Assert.Empty(_chat.Requests);
     }
 
     [Fact]
-    public void US4_AC1_Contrast_IndicatorIsNotAMessage()
+    public async Task US4_AC1_Contrast_IndicatorIsNotAMessage()
     {
-        // Expected: #messages li count = 1 (user only) while pending.
-        // Demonstrates: the indicator isn't mistaken for a reply.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        Assert.Single(page.FindAll("#messages li"));
+
+        reply.SetResult("Hi");
+        await submit;
     }
 
     // Group 2 — no double send (AC2)
 
     [Fact]
-    public void US4_AC2_WhilePending_SendDisabled()
+    public async Task US4_AC2_WhilePending_SendDisabled()
     {
-        // Then Send has the disabled attribute even though "Hello" is valid.
-        // Demonstrates: the visitor can't click Send twice.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        Assert.True(SendDisabled(page));
+
+        reply.SetResult("Hi");
+        await submit;
     }
 
     [Fact]
-    public void US4_AC2_WhilePending_Enter_DoesNotSendAgain()
+    public async Task US4_AC2_WhilePending_Enter_DoesNotSendAgain()
     {
-        // Changed: press Enter while pending. Expected: Requests.Count == 1, 1 user message.
-        // Demonstrates: the keyboard path is blocked too.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        await page.Find("#chat-input").KeyDownAsync(new KeyboardEventArgs { Key = "Enter" });
+
+        Assert.Single(_chat.Requests);
+        Assert.Single(page.FindAll("#messages li.user"));
+        reply.SetResult("Hi");
+        await submit;
     }
 
     [Fact]
-    public void US4_AC2_WhilePending_Submit_DoesNotSendAgain()
+    public async Task US4_AC2_WhilePending_Submit_DoesNotSendAgain()
     {
-        // Changed: submit the form again. Expected: Requests.Count == 1.
-        // Demonstrates: the click/submit path is blocked.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        await page.Find("#chat-form").SubmitAsync();
+
+        Assert.Single(_chat.Requests);
+        reply.SetResult("Hi");
+        await submit;
     }
 
     [Fact]
-    public void US4_AC2_WhilePending_NewValidText_StillDisabled()
+    public async Task US4_AC2_WhilePending_NewValidText_StillDisabled()
     {
-        // Changed: type "Next" while pending. Expected: Send still disabled.
-        // Demonstrates: valid new text doesn't unlock Send early.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        await page.Find("#chat-input").InputAsync(new() { Value = "Next" });
+
+        Assert.True(SendDisabled(page));
+        reply.SetResult("Hi");
+        await submit;
     }
 
     // Group 3 — indicator clears when done (AC3)
 
     [Fact]
-    public void US4_AC3_OnSuccess_IndicatorRemoved_SendReenabledWhenValid()
+    public async Task US4_AC3_OnSuccess_IndicatorRemoved_SendReenabledWhenValid()
     {
-        // When the reply "Hi" resolves and "Next" is typed, Then no indicator and Send enabled.
-        // Demonstrates: the page returns to normal after a reply.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        reply.SetResult("Hi");
+        await submit;
+        await page.Find("#chat-input").InputAsync(new() { Value = "Next" });
+
+        Assert.Empty(page.FindAll("#typing-indicator"));
+        Assert.False(SendDisabled(page));
     }
 
     [Fact]
-    public void US4_AC3_OnSuccess_EmptyInput_SendStaysDisabled()
+    public async Task US4_AC3_OnSuccess_EmptyInput_SendStaysDisabled()
     {
-        // Edge — Changed: input empty after the reply. Expected: Send disabled.
-        // Demonstrates: "enabled again" still respects US-3.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        reply.SetResult("Hi");
+        await submit;
+
+        Assert.Empty(page.FindAll("#typing-indicator"));
+        Assert.True(SendDisabled(page));
     }
 
     [Fact]
-    public void US4_AC3_OnProviderError_IndicatorRemoved_SendReenabled()
+    public async Task US4_AC3_OnProviderError_IndicatorRemoved_SendReenabled()
     {
-        // Changed: SetException(ChatProviderException). Expected: await submit doesn't throw, no indicator,
-        // Send enabled ("Hello" kept), no assistant message.
-        // Demonstrates: a failed reply never leaves the page stuck.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        reply.SetException(new ChatProviderException("boom"));
+        await submit;
+
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll("#typing-indicator")));
+        Assert.False(SendDisabled(page));
+        Assert.Equal("Hello", page.Find("#chat-input").GetAttribute("value"));
+        Assert.Empty(page.FindAll("#messages li.assistant"));
     }
 
     [Fact]
-    public void US4_AC3_OnTimeout_IndicatorRemoved()
+    public async Task US4_AC3_OnTimeout_IndicatorRemoved()
     {
-        // Changed: SetException(TaskCanceledException). Expected: same as the provider-error test.
-        // Demonstrates: an HttpClient timeout is handled too.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        reply.SetException(new TaskCanceledException());
+        await submit;
+
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll("#typing-indicator")));
+        Assert.False(SendDisabled(page));
+        Assert.Empty(page.FindAll("#messages li.assistant"));
     }
 
     [Fact]
-    public void US4_AC3_AfterFailure_CanSendAgain()
+    public async Task US4_AC3_AfterFailure_CanSendAgain()
     {
-        // Changed: after a provider error, send again and resolve. Expected: Requests.Count == 2.
-        // Demonstrates: the flag is fully reset after an error.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+        reply.SetException(new ChatProviderException("boom"));
+        await submit;
+
+        _chat.Pending = null;
+        _chat.Replies.Enqueue("Hi");
+        await page.Find("#chat-form").SubmitAsync();
+
+        Assert.Equal(2, _chat.Requests.Count);
+        Assert.Single(page.FindAll("#messages li.assistant"));
     }
 
     // Group 4 — typing while waiting (AC4, AC7)
 
     [Fact]
-    public void US4_AC4_WhilePending_InputEditable()
+    public async Task US4_AC4_WhilePending_InputEditable()
     {
-        // Then #chat-input has no disabled/readonly, and typing "Next" updates its value.
-        // Demonstrates: the visitor can draft the next message while waiting.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        var input = page.Find("#chat-input");
+        Assert.False(input.HasAttribute("disabled"));
+        Assert.False(input.HasAttribute("readonly"));
+        await input.InputAsync(new() { Value = "Next" });
+        Assert.Equal("Next", page.Find("#chat-input").GetAttribute("value"));
+
+        reply.SetResult("Hi");
+        await submit;
     }
 
     [Fact]
-    public void US4_AC7_DraftTypedWhilePending_KeptAfterReply()
+    public async Task US4_AC7_DraftTypedWhilePending_KeptAfterReply()
     {
-        // Changed: type "Next" while pending, then resolve. Expected: input value = "Next".
-        // Demonstrates: a new draft isn't wiped by the reply.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+        await page.Find("#chat-input").InputAsync(new() { Value = "Next" });
+
+        reply.SetResult("Hi");
+        await submit;
+
+        Assert.Equal("Next", page.Find("#chat-input").GetAttribute("value"));
     }
 
     [Fact]
-    public void US4_AC7_Contrast_UnchangedText_ClearedAfterReply()
+    public async Task US4_AC7_Contrast_UnchangedText_ClearedAfterReply()
     {
-        // Changed: don't edit, then resolve. Expected: input = "" (US-1 AC-4 behavior).
-        // Demonstrates: the old clear-after-reply still works.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        reply.SetResult("Hi");
+        await submit;
+
+        Assert.Equal("", page.Find("#chat-input").GetAttribute("value") ?? "");
     }
 
     // Group S1 — server-side guard (AC5, SEC1)
 
     [Fact]
-    public void US4_AC5_ForcedSubmitWhilePending_SingleRequest()
+    public async Task US4_AC5_ForcedSubmitWhilePending_SingleRequest()
     {
-        // When #chat-form is submitted twice back to back (no render in between), Then exactly 1 request, 1 user message.
-        // Demonstrates: the disabled attribute isn't the only thing preventing a double charge.
-        Assert.Fail("TODO: not implemented");
+        var reply = new TaskCompletionSource<string>();
+        _chat.Pending = reply.Task;
+        var page = Render<Chat>();
+        page.Find("#chat-input").Input("Hello");
+        var form = page.Find("#chat-form");
+
+        var first = form.SubmitAsync();
+        var second = form.SubmitAsync();
+
+        Assert.Single(_chat.Requests);
+        Assert.Single(page.FindAll("#messages li.user"));
+        reply.SetResult("Hi");
+        await Task.WhenAll(first, second);
     }
 
     // Group S2 — no leakage on failure (SEC3)
 
     [Fact]
-    public void US4_SEC3_OnError_NoExceptionTextShown()
+    public async Task US4_SEC3_OnError_NoExceptionTextShown()
     {
-        // Given SetException(new ChatProviderException("secret-detail")), Then the markup doesn't contain "secret-detail".
-        // Demonstrates: internal error details never reach the visitor.
-        Assert.Fail("TODO: not implemented");
+        var (page, reply, submit) = StartPending();
+
+        reply.SetException(new ChatProviderException("secret-detail"));
+        await submit;
+
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll("#typing-indicator")));
+        Assert.DoesNotContain("secret-detail", page.Markup);
+    }
+
+
+    // ---------- US-5 Keep the conversation after reloading ----------
+    // Plan: docs/features/plans/US-5-restore-after-reload-plan.md §7
+
+    private static readonly Guid SavedA = Guid.Parse("3f2b8c1e-6a4d-4e0f-9b7a-2c5d1e8f4a90");
+
+    private void SavedId(string? value) => JSInterop.Setup<string?>("chatStore.get").SetResult(value);
+
+    private static ConversationDto Convo(Guid id, params (string Role, string Text)[] messages) =>
+        new(id, "title", DateTime.UtcNow,
+            messages.Select((m, i) => new MessageDto(Guid.NewGuid(), m.Role, m.Text, DateTime.UtcNow.AddSeconds(i))).ToList());
+
+    private IRenderedComponent<Chat> RenderRestored()
+    {
+        SavedId(SavedA.ToString());
+        _chat.Conversations[SavedA] = Convo(SavedA,
+            ("user", "Hi"), ("assistant", "Hello!"), ("user", "How are you?"), ("assistant", "Fine."));
+        var page = Render<Chat>();
+        page.WaitForAssertion(() => Assert.Equal(4, Messages(page).Count));
+        return page;
+    }
+
+    private int Calls(string identifier) =>
+        JSInterop.Invocations.Count(i => i.Identifier == identifier);
+
+    // Group 1 — id is saved (AC1, BR-1)
+
+    [Fact]
+    public async Task US5_AC1_AfterReply_IdIsSaved()
+    {
+        var id = Guid.NewGuid();
+        _chat.Replies.Enqueue("Hi");
+        _chat.ConversationIds.Enqueue(id);
+        var page = Render<Chat>();
+
+        await SendAsync(page, "Hello");
+
+        var set = Assert.Single(JSInterop.Invocations["chatStore.set"]);
+        Assert.Equal(id.ToString(), set.Arguments.Single());
+    }
+
+    [Fact]
+    public async Task US5_AC1_FollowUp_SavesLatestId()
+    {
+        var b = Guid.NewGuid();
+        _chat.Replies.Enqueue("Hi");
+        _chat.Replies.Enqueue("Again");
+        _chat.ConversationIds.Enqueue(Guid.NewGuid());
+        _chat.ConversationIds.Enqueue(b);
+        var page = Render<Chat>();
+
+        await SendAsync(page, "Hello");
+        await SendAsync(page, "More");
+
+        Assert.Equal(b.ToString(), JSInterop.Invocations["chatStore.set"][^1].Arguments.Single());
+    }
+
+    [Fact]
+    public async Task US5_AC1_Contrast_FailedSend_NothingSaved()
+    {
+        _chat.Pending = Task.FromException<string>(new ChatProviderException("boom"));
+        var page = Render<Chat>();
+
+        await SendAsync(page, "Hello");
+
+        Assert.Equal(0, Calls("chatStore.set"));
+    }
+
+    [Fact]
+    public void US5_AC1_Contrast_FreshPage_NothingSaved()
+    {
+        Render<Chat>();
+
+        Assert.Equal(0, Calls("chatStore.set"));
+    }
+
+    [Fact]
+    public async Task US5_BR1_OnlyIdIsStored()
+    {
+        _chat.Replies.Enqueue("Hi");
+        var page = Render<Chat>();
+
+        await SendAsync(page, "Hello");
+
+        var args = Assert.Single(JSInterop.Invocations["chatStore.set"]).Arguments;
+        var only = Assert.Single(args);
+        Assert.True(Guid.TryParse(only as string, out _));
+    }
+
+    // Group 2 — history reloads (AC2, AC7)
+
+    [Fact]
+    public void US5_AC2_SavedId_ShowsHistoryInOrderWithLabels()
+    {
+        var page = RenderRestored();
+
+        Assert.Equal(
+            [
+                ("message user", "You", "Hi"),
+                ("message assistant", "Assistant", "Hello!"),
+                ("message user", "You", "How are you?"),
+                ("message assistant", "Assistant", "Fine."),
+            ],
+            Messages(page));
+        Assert.Equal([SavedA], _chat.GetRequests);
+    }
+
+    [Fact]
+    public void US5_AC2_RestoredHistory_ScrollsToLatest()
+    {
+        var page = RenderRestored();
+
+        page.WaitForAssertion(() => Assert.Equal(1, Calls("chatScroll.toBottom")));
+    }
+
+    [Fact]
+    public void US5_AC2_Contrast_NoSavedId_NoFetch()
+    {
+        SavedId(null);
+
+        var page = Render<Chat>();
+
+        Assert.Empty(_chat.GetRequests);
+        Assert.NotNull(page.Find(".empty"));
+    }
+
+    [Fact]
+    public void US5_AC7_InvalidSavedId_NoFetch_Cleared()
+    {
+        SavedId("abc");
+
+        var page = Render<Chat>();
+
+        page.WaitForAssertion(() => Assert.Equal(1, Calls("chatStore.clear")));
+        Assert.Empty(_chat.GetRequests);
+        Assert.Empty(Messages(page));
+    }
+
+    [Fact]
+    public void US5_AC2_Contrast_EmptyHistory_ShowsEmptyState()
+    {
+        SavedId(SavedA.ToString());
+        _chat.Conversations[SavedA] = Convo(SavedA);
+
+        var page = Render<Chat>();
+
+        page.WaitForAssertion(() => Assert.Single(_chat.GetRequests));
+        page.WaitForAssertion(() => Assert.NotNull(page.Find(".empty")));
+        Assert.Equal(0, Calls("chatStore.clear"));
+    }
+
+    // Group 3 — next send continues (AC3)
+
+    [Fact]
+    public async Task US5_AC3_AfterRestore_SendUsesSavedId()
+    {
+        _chat.Replies.Enqueue("Sure");
+        var page = RenderRestored();
+
+        await SendAsync(page, "More");
+
+        Assert.Equal(SavedA, _chat.Requests.Single().ConversationId);
+    }
+
+    [Fact]
+    public async Task US5_AC3_Contrast_NotFound_SendHasNoId()
+    {
+        SavedId(SavedA.ToString());
+        _chat.Replies.Enqueue("Hi");
+        var page = Render<Chat>();
+        page.WaitForAssertion(() => Assert.Equal(1, Calls("chatStore.clear")));
+
+        await SendAsync(page, "Hello");
+
+        Assert.Null(_chat.Requests.Single().ConversationId);
+    }
+
+    // Group 4 — missing conversation (AC4)
+
+    [Fact]
+    public void US5_AC4_NotFound_ClearsId_EmptyChat_NoError()
+    {
+        SavedId(SavedA.ToString());
+
+        var page = Render<Chat>();
+
+        page.WaitForAssertion(() => Assert.Equal(1, Calls("chatStore.clear")));
+        Assert.NotNull(page.Find(".empty"));
+        Assert.Empty(page.FindAll("#chat-error"));
+        Assert.Empty(page.FindAll("#restore-indicator"));
+    }
+
+    [Fact]
+    public void US5_AC4_Contrast_Found_IdNotCleared()
+    {
+        RenderRestored();
+
+        Assert.Equal(0, Calls("chatStore.clear"));
+    }
+
+    // Group 5 — loading state (AC5)
+
+    private (IRenderedComponent<Chat> Page, TaskCompletionSource<ConversationDto?> Restore) StartRestoring()
+    {
+        SavedId(SavedA.ToString());
+        var restore = new TaskCompletionSource<ConversationDto?>();
+        _chat.PendingConversation = restore.Task;
+        var page = Render<Chat>();
+        page.WaitForAssertion(() => Assert.NotNull(page.Find("#restore-indicator")));
+        return (page, restore);
+    }
+
+    [Fact]
+    public async Task US5_AC5_WhileRestoring_IndicatorShown_SendDisabled()
+    {
+        var (page, restore) = StartRestoring();
+        await page.Find("#chat-input").InputAsync(new() { Value = "Hello" });
+
+        var indicator = page.Find("#restore-indicator");
+        Assert.Equal("status", indicator.GetAttribute("role"));
+        Assert.Contains("Loading conversation", indicator.TextContent);
+        Assert.Empty(page.FindAll(".empty"));
+        Assert.True(SendDisabled(page));
+
+        restore.SetResult(Convo(SavedA, ("user", "Hi")));
+    }
+
+    [Fact]
+    public async Task US5_AC5_AfterRestore_IndicatorCleared_SendEnabled()
+    {
+        var (page, restore) = StartRestoring();
+        await page.Find("#chat-input").InputAsync(new() { Value = "Hello" });
+
+        restore.SetResult(Convo(SavedA, ("user", "Hi"), ("assistant", "Hello!")));
+
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll("#restore-indicator")));
+        Assert.False(SendDisabled(page));
+    }
+
+    [Fact]
+    public async Task US5_AC5_WhileRestoring_EnterAndSubmit_DoNotSend()
+    {
+        var (page, restore) = StartRestoring();
+        await page.Find("#chat-input").InputAsync(new() { Value = "Hello" });
+
+        await page.Find("#chat-input").KeyDownAsync(new KeyboardEventArgs { Key = "Enter", ShiftKey = false });
+        await page.Find("#chat-form").SubmitAsync();
+
+        Assert.Empty(_chat.Requests);
+        restore.SetResult(null);
+    }
+
+    [Fact]
+    public void US5_AC5_Contrast_NoSavedId_NoIndicator()
+    {
+        SavedId(null);
+
+        var page = Render<Chat>();
+
+        Assert.Empty(page.FindAll("#restore-indicator"));
+    }
+
+    // Group 6 — restore failure (AC6; decision D2: keep the saved id)
+
+    [Fact]
+    public async Task US5_AC6_RestoreThrows_EmptyChat_IndicatorCleared_SendWorks()
+    {
+        SavedId(SavedA.ToString());
+        _chat.ThrowOnGet = true;
+        _chat.Replies.Enqueue("Hi");
+
+        var page = Render<Chat>();
+
+        page.WaitForAssertion(() => Assert.Single(_chat.GetRequests));
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll("#restore-indicator")));
+        Assert.NotNull(page.Find(".empty"));
+        Assert.Equal(0, Calls("chatStore.clear"));
+        Assert.DoesNotContain("db down", page.Markup);
+
+        await SendAsync(page, "Hello");
+
+        Assert.Equal(SavedA, _chat.Requests.Single().ConversationId);
+        Assert.Equal(["Hello", "Hi"], Messages(page).Select(m => m.Text));
+    }
+
+    // Group S1 — encoding (SEC1)
+
+    [Fact]
+    public void US5_SEC1_RestoredHtml_RenderedAsText()
+    {
+        SavedId(SavedA.ToString());
+        _chat.Conversations[SavedA] = Convo(SavedA, ("user", "Hi"), ("assistant", "<b>x</b>"));
+
+        var page = Render<Chat>();
+
+        page.WaitForAssertion(() => Assert.Equal(2, Messages(page).Count));
+        Assert.Equal("<b>x</b>", Messages(page)[1].Text);
+        Assert.Empty(page.FindAll("#messages b"));
     }
 
     private sealed class FakeChatService : IChatService
@@ -574,6 +967,12 @@ public sealed class ChatPageTests : BunitContext
         public Task<string>? Pending { get; set; }
         public Queue<Guid> ConversationIds { get; } = new();
 
+        // US-5 restore setup.
+        public Dictionary<Guid, ConversationDto> Conversations { get; } = [];
+        public Task<ConversationDto?>? PendingConversation { get; set; }
+        public bool ThrowOnGet { get; set; }
+        public List<Guid> GetRequests { get; } = [];
+
         public async Task<ChatResponse> SendMessageAsync(ChatRequest request, CancellationToken cancellationToken)
         {
             Requests.Add(request);
@@ -582,7 +981,18 @@ public sealed class ChatPageTests : BunitContext
             return new ChatResponse(conversationId, Guid.NewGuid(), reply, DateTime.UtcNow);
         }
 
-        public Task<ConversationDto?> GetConversationAsync(Guid conversationId, CancellationToken cancellationToken) =>
-            Task.FromResult<ConversationDto?>(null);
+        public async Task<ConversationDto?> GetConversationAsync(Guid conversationId, CancellationToken cancellationToken)
+        {
+            GetRequests.Add(conversationId);
+
+            if (ThrowOnGet)
+            {
+                throw new InvalidOperationException("db down");
+            }
+
+            return PendingConversation is not null
+                ? await PendingConversation
+                : Conversations.GetValueOrDefault(conversationId);
+        }
     }
 }
