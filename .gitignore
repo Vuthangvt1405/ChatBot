@@ -486,3 +486,7 @@ $RECYCLE.BIN/
 *.db-shm
 *.db-wal
 
+
+# Claude Code: local config and packaged skill bundles
+.claude/
+*.skill
