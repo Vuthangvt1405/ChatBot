@@ -7,7 +7,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.errors import ChatProviderError, ConversationNotFoundError
+from app.models import Conversation
 from app.services import get_chat_service
+from tests.test_agents_api import db_count
 
 
 def test_send_fragment_returns_reply_as_text_with_conversation_header(client: TestClient):
@@ -96,3 +98,18 @@ def test_history_fragment_failure_returns_500_without_details(app: FastAPI, clie
 
     assert response.status_code == 500
     assert response.text == ""
+
+
+# ---------- STORY-01 Agent Studio ----------
+# Plan: docs/features/plans/ai-data-studio/STORY-01-agent-studio-plan.md §7 (G6❌7)
+# Group 6 — Chat uses the selected agent's model and instructions · page route
+
+
+def test_ads01_ac10_ui_send_unknown_agent_returns_404_with_error_code(client: TestClient):
+    response = client.post("/ui/send", data={"message": "Hello", "agent_id": str(uuid.uuid4())})
+
+    assert response.status_code == 404
+    assert response.text == ""
+    assert response.headers["X-Error-Code"] == "agent_not_found"
+    assert "X-Conversation-Id" not in response.headers
+    assert db_count(client, Conversation) == 0

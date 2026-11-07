@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.errors import ConversationNotFoundError
 from app.models import Conversation, Message, MessageRole
 from app.schemas import ChatRequest, ChatResponse, ConversationOut, MessageOut
+from app.services.agent_profiles import AgentProfileService, ChatAgent
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +36,24 @@ def build_title(message: str) -> str:
 class ChatServiceBase(ABC):
     """Shared conversation persistence. Providers only implement generate_reply."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self, session: AsyncSession, agents: AgentProfileService, workspace_id: uuid.UUID
+    ) -> None:
         self.session = session
+        # STORY-01: resolve a message's agentId within this workspace (SEC2, SEC3). Both are
+        # required, so no chat service can exist that is unable to check an agent id (D21).
+        self._agents = agents
+        self._workspace_id = workspace_id
 
     async def send_message(self, request: ChatRequest) -> ChatResponse:
         db = self.session
+
+        # STORY-01 AC14, SEC2, SEC3: the agent id comes from the page, so it's looked up in this
+        # workspace on every send. Unknown or foreign → AgentNotFoundError (404) before anything
+        # is saved.
+        agent: ChatAgent | None = None
+        if request.agent_id is not None:
+            agent = await self._agents.get_chat_agent(self._workspace_id, request.agent_id)
 
         # US-6 AC-7: a turn is saved only once the reply has arrived, so a failed send
         # stores nothing (no half turn, no empty conversation). Nothing is added to the
@@ -67,7 +81,7 @@ class ChatServiceBase(ABC):
         )
         history.append(user)
 
-        reply = await self.generate_reply(conversation, history)
+        reply = await self.generate_reply(conversation, history, agent)
 
         # Created after the reply, so it always sorts after the user's message.
         assistant = Message(
@@ -115,5 +129,14 @@ class ChatServiceBase(ABC):
         )
 
     @abstractmethod
-    async def generate_reply(self, conversation: Conversation, history: Sequence[Message]) -> str:
-        """Return the assistant's reply for the conversation so far."""
+    async def generate_reply(
+        self,
+        conversation: Conversation,
+        history: Sequence[Message],
+        agent: ChatAgent | None = None,
+    ) -> str:
+        """Return the assistant's reply for the conversation so far.
+
+        STORY-01: `agent` is the selected agent (instructions, model, thinking level), or None
+        for the default assistant.
+        """

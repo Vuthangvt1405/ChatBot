@@ -6,14 +6,26 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 
+from app.schemas import MAX_AGENTS_PER_WORKSPACE
+
 logger = logging.getLogger(__name__)
 
 # US-6 AC-11: detail for any error that isn't a known one. The real error is only in the log.
 UNEXPECTED_DETAIL = "Something went wrong. Please try again."
 
+# STORY-01: fixed, client-safe texts. The not-found detail never contains the id (SEC2).
+AGENT_NOT_FOUND_DETAIL = "Agent not found."
+AGENT_NAME_TAKEN_DETAIL = "An agent with this name already exists."
+AGENT_LIMIT_DETAIL = f"You can save up to {MAX_AGENTS_PER_WORKSPACE} agents."
+UNSUPPORTED_MODEL_MESSAGE = "Choose a supported model."
+# /ui/send answers 404 with this X-Error-Code so the page can tell "agent gone" from
+# "conversation gone" (plan §4.3).
+AGENT_NOT_FOUND_ERROR_CODE = "agent_not_found"
+
 _PROBLEM_TYPES = {
     400: "https://tools.ietf.org/html/rfc9110#section-15.5.1",
     404: "https://tools.ietf.org/html/rfc9110#section-15.5.5",
+    409: "https://tools.ietf.org/html/rfc9110#section-15.5.10",
     500: "https://tools.ietf.org/html/rfc9110#section-15.6.1",
     502: "https://tools.ietf.org/html/rfc9110#section-15.6.3",
 }
@@ -29,6 +41,22 @@ class ConversationNotFoundError(Exception):
 
 class ChatProviderError(Exception):
     """The upstream chat provider failed. The message is safe to return to clients."""
+
+
+class AgentNotFoundError(Exception):
+    """STORY-01 AC10: the agent doesn't exist or belongs to another workspace (same answer)."""
+
+
+class AgentNameTakenError(Exception):
+    """STORY-01 AC7: another agent in the workspace has this name (ignoring case)."""
+
+
+class AgentLimitReachedError(Exception):
+    """STORY-01 AC12: the workspace already has MAX_AGENTS_PER_WORKSPACE agents."""
+
+
+class UnsupportedModelError(Exception):
+    """STORY-01 AC8: modelId is not in the configured supported list."""
 
 
 def problem(status: int, title: str, detail: str | None = None, **extra) -> JSONResponse:
@@ -66,6 +94,29 @@ def add_exception_handlers(app: FastAPI) -> None:
         # Provider messages are fixed, client-safe strings.
         logger.warning("Chat provider failed: %s", exc)
         return problem(502, "Chat provider error", str(exc))
+
+    # ---- STORY-01 Agent Studio: fixed bodies, never the input or the id (SEC2, SEC5).
+
+    @app.exception_handler(AgentNotFoundError)
+    async def _agent_not_found(request: Request, exc: AgentNotFoundError) -> JSONResponse:
+        return problem(404, "Agent not found", AGENT_NOT_FOUND_DETAIL)
+
+    @app.exception_handler(AgentNameTakenError)
+    async def _agent_name_taken(request: Request, exc: AgentNameTakenError) -> JSONResponse:
+        return problem(409, "Agent name taken", AGENT_NAME_TAKEN_DETAIL)
+
+    @app.exception_handler(AgentLimitReachedError)
+    async def _agent_limit(request: Request, exc: AgentLimitReachedError) -> JSONResponse:
+        return problem(409, "Agent limit reached", AGENT_LIMIT_DETAIL)
+
+    @app.exception_handler(UnsupportedModelError)
+    async def _unsupported_model(request: Request, exc: UnsupportedModelError) -> JSONResponse:
+        # Same shape as other validation errors (400 + errors map).
+        return problem(
+            400,
+            "One or more validation errors occurred.",
+            errors={"modelId": [UNSUPPORTED_MODEL_MESSAGE]},
+        )
 
     @app.middleware("http")
     async def _unexpected(request: Request, call_next: RequestResponseEndpoint) -> Response:

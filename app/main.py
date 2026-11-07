@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.config import MissingApiKeyError, Settings
 from app.db import make_engine, run_migrations
 from app.errors import add_exception_handlers
-from app.routers import api, health, pages
+from app.routers import agents, api, health, pages
 from app.services.openrouter import create_http_client
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -53,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     add_exception_handlers(app)
     app.include_router(api.router)
+    app.include_router(agents.router)
     app.include_router(health.router)
     app.include_router(pages.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

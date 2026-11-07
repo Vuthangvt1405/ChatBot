@@ -48,6 +48,7 @@ Set in `.env` or as environment variables. Nested keys use a double underscore.
 |---|---|---|
 | `OPENROUTER__API_KEY` | *empty* | **Secret, required.** The app stops at startup with a clear error if it is missing |
 | `OPENROUTER__MODEL` | `stealth/crouton-alpha` | Any OpenRouter model id |
+| `OPENROUTER__SUPPORTED_MODELS` | *empty* | JSON list of models an Agent Studio agent may use, e.g. `["openai/gpt-4o-mini"]`. The default model is always added, so by default it's the only choice |
 | `OPENROUTER__BASE_URL` | `https://openrouter.ai/api/v1/` | |
 | `OPENROUTER__SYSTEM_PROMPT` | `You are a helpful, concise assistant.` | |
 | `OPENROUTER__MAX_HISTORY_MESSAGES` | `20` | Recent messages sent as context |
@@ -96,6 +97,18 @@ GET /api/chat/{conversationId}/messages
 
 Returns the conversation with its ordered messages, or `404`.
 
+### Agent Studio
+
+```http
+GET  /api/agents                    # saved agents, by name
+POST /api/agents                    # create  { name, systemPrompt, modelId, enabledTools, thinkingLevel }
+GET  /api/agents/{agentId}
+PUT  /api/agents/{agentId}          # replace the editable fields; the last save wins
+GET  /api/agent-studio/options      # presets, supported models, tools, thinking levels, limits
+```
+
+`POST /api/chat` also takes an optional `agentId`: that agent's instructions, model and thinking level answer the message. An unknown `agentId` is `404` and nothing is saved. Design: [plan](docs/features/plans/ai-data-studio/STORY-01-agent-studio-plan.md).
+
 ### Health
 
 ```http
@@ -129,12 +142,12 @@ API tests boot the app with a temporary SQLite file and the echo provider, so th
 
 ```powershell
 docker build -t chatbot-api .
-docker run --rm -p 8080:8080 `
+docker run --rm -p 127.0.0.1:8080:8080 `
   -e OPENROUTER__API_KEY="sk-or-v1-..." `
   -v chatbot-data:/app/data `
   chatbot-api
 ```
 
-The image runs as the non-root `app` user on port 8080 with the SQLite file at `/app/data/chatbot.db` (mount a volume to persist it).
+The image runs as the non-root `app` user on port 8080 with the SQLite file at `/app/data/chatbot.db` (mount a volume to persist it). `127.0.0.1:` keeps the app reachable from this machine only; the app has no sign-in.
 
 > `stealth/crouton-alpha` is a temporary stealth model on OpenRouter; set `OPENROUTER__MODEL` to a stable model id for anything long-lived.
