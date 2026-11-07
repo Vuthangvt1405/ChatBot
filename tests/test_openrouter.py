@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -13,8 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.config import OpenRouterSettings
 from app.errors import ChatProviderError
 from app.models import Base, Conversation, Message
-from app.schemas import ChatRequest
+from app.schemas import AgentProfileRequest, ChatRequest
+from app.services.agent_profiles import AgentProfileService
 from app.services.openrouter import OpenRouterChatService, create_http_client
+from app.workspace import DEFAULT_WORKSPACE_ID
 
 BASE_URL = "https://openrouter.ai/api/v1/"
 COMPLETIONS = f"{BASE_URL}chat/completions"
@@ -51,7 +54,9 @@ async def http() -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture
 def service(session: AsyncSession, http: httpx.AsyncClient) -> OpenRouterChatService:
-    return OpenRouterChatService(session, http, SETTINGS)
+    return OpenRouterChatService(
+        session, http, SETTINGS, AgentProfileService(session, SETTINGS), DEFAULT_WORKSPACE_ID
+    )
 
 
 async def count(session: AsyncSession, model, *where) -> int:
@@ -128,7 +133,9 @@ async def test_send_message_sends_only_recent_history_and_attribution_headers(se
     settings = SETTINGS.model_copy(
         update={"max_history_messages": 2, "site_url": "https://example.test", "app_name": "Bot"}
     )
-    service = OpenRouterChatService(session, http, settings)
+    service = OpenRouterChatService(
+        session, http, settings, AgentProfileService(session, settings), DEFAULT_WORKSPACE_ID
+    )
 
     first = await service.send_message(ChatRequest(message="one"))
     await service.send_message(ChatRequest(message="two", conversation_id=first.conversation_id))
@@ -240,3 +247,171 @@ async def test_us6_ac8_contrast_cancelled_not_wrapped(service):
 
     with pytest.raises(asyncio.CancelledError):
         await service.send_message(ChatRequest(message="Hello"))
+
+
+# ---------- STORY-01 Agent Studio: chat uses the selected agent ----------
+# Plan: docs/features/plans/ai-data-studio/STORY-01-agent-studio-plan.md §7 (G6, G9)
+
+M2 = "vendor/model-two"
+AGENT_SETTINGS = SETTINGS.model_copy(update={"supported_models": [SETTINGS.model, M2]})
+AGENT_PROMPT = "You are a strict evaluator."
+
+
+async def save_agent(session: AsyncSession, **overrides) -> uuid.UUID:
+    fields = {
+        "name": "Agent B",
+        "system_prompt": AGENT_PROMPT,
+        "model_id": M2,
+        "enabled_tools": [],
+        "thinking_level": "MEDIUM",
+        **overrides,
+    }
+    agent = await AgentProfileService(session, AGENT_SETTINGS).create_agent(
+        DEFAULT_WORKSPACE_ID, AgentProfileRequest(**fields)
+    )
+    return agent.id
+
+
+def agent_aware_service(
+    session: AsyncSession, http: httpx.AsyncClient, settings: OpenRouterSettings = AGENT_SETTINGS
+) -> OpenRouterChatService:
+    return OpenRouterChatService(
+        session, http, settings, AgentProfileService(session, settings), DEFAULT_WORKSPACE_ID
+    )
+
+
+def sent(route, index: int = -1) -> dict:
+    return json.loads(route.calls[index].request.content)
+
+
+# Group 6 — Chat uses the selected agent's model and instructions (covers AC4, AC8, AC10, AC11,
+#   AC14) · unit (`test_openrouter.py`, respx) + API
+# Baseline: Given a saved agent B with model M2 and prompt P, supported [M1, M2], default M1 ·
+#   When a chat message with `agentId: B` is sent
+
+
+@respx.mock
+async def test_ads01_ac4_chat_uses_selected_agent_model_and_instructions(
+    session: AsyncSession, http: httpx.AsyncClient
+):
+    route = respx.post(COMPLETIONS).mock(return_value=reply_with("ok"))
+    agent_id = await save_agent(session)
+
+    await agent_aware_service(session, http).send_message(
+        ChatRequest(message="Hi", agent_id=agent_id)
+    )
+
+    body = sent(route)
+    assert body["model"] == M2
+    assert body["messages"][0] == {"role": "system", "content": AGENT_PROMPT}
+
+
+@respx.mock
+async def test_ads01_ac11_no_agent_id_uses_default_model_and_prompt(
+    session: AsyncSession, http: httpx.AsyncClient
+):
+    route = respx.post(COMPLETIONS).mock(return_value=reply_with("ok"))
+    await save_agent(session)
+
+    await agent_aware_service(session, http).send_message(ChatRequest(message="Hi"))
+
+    body = sent(route)
+    assert body["model"] == SETTINGS.model
+    assert body["messages"][0] == {"role": "system", "content": "Be concise."}
+
+
+@respx.mock
+async def test_ads01_ac14_switching_agent_id_changes_next_reply_model(
+    session: AsyncSession, http: httpx.AsyncClient
+):
+    route = respx.post(COMPLETIONS).mock(return_value=reply_with("ok"))
+    agent_a = await save_agent(session, name="Agent A", model_id=SETTINGS.model)
+    agent_b = await save_agent(session, name="Agent B", model_id=M2)
+    service = agent_aware_service(session, http)
+
+    first = await service.send_message(ChatRequest(message="one", agent_id=agent_a))
+    second = await service.send_message(
+        ChatRequest(message="two", conversation_id=first.conversation_id, agent_id=agent_b)
+    )
+
+    assert second.conversation_id == first.conversation_id
+    assert sent(route, 0)["model"] == SETTINGS.model
+    assert sent(route, 1)["model"] == M2
+    # D19: the new agent sees the earlier messages of the same conversation.
+    assert [m["content"] for m in sent(route, 1)["messages"][1:]] == ["one", "ok", "two"]
+
+
+@respx.mock
+async def test_ads01_ac4_saved_model_no_longer_supported_falls_back_to_default(
+    session: AsyncSession, http: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+):
+    route = respx.post(COMPLETIONS).mock(return_value=reply_with("ok"))
+    agent_id = await save_agent(session, model_id=M2)
+    without_m2 = SETTINGS  # supported_models is only the default model
+
+    await agent_aware_service(session, http, without_m2).send_message(
+        ChatRequest(message="Hi", agent_id=agent_id)
+    )
+
+    assert sent(route)["model"] == SETTINGS.model
+    assert str(agent_id) in caplog.text
+    assert AGENT_PROMPT not in caplog.text
+
+
+# Group 9 — Thinking level is saved and sent with every reply (covers AC13, SEC5, SEC6) · API +
+#   unit (`test_openrouter.py`, respx)
+# Baseline: Given an empty workspace · When `POST /api/agents` (as G1) with `thinkingLevel:
+#   "HIGH"`, then a chat message is sent
+
+
+@respx.mock
+async def test_ads01_ac13_chat_sends_selected_agent_thinking_level(
+    session: AsyncSession, http: httpx.AsyncClient
+):
+    route = respx.post(COMPLETIONS).mock(return_value=reply_with("ok"))
+    agent_id = await save_agent(session, thinking_level="HIGH")
+
+    await agent_aware_service(session, http).send_message(
+        ChatRequest(message="Hi", agent_id=agent_id)
+    )
+
+    assert sent(route)["reasoning"] == {"effort": "high", "exclude": True}
+
+
+@respx.mock
+async def test_ads01_ac13_no_agent_id_sends_no_reasoning_setting(
+    session: AsyncSession, http: httpx.AsyncClient
+):
+    route = respx.post(COMPLETIONS).mock(return_value=reply_with("ok"))
+
+    await agent_aware_service(session, http).send_message(ChatRequest(message="Hi"))
+
+    assert "reasoning" not in sent(route)
+
+
+@respx.mock
+async def test_ads01_ac13_thinking_text_never_shown_in_reply(
+    session: AsyncSession, http: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+):
+    caplog.set_level(logging.DEBUG)
+    thoughts = "SECRET-THOUGHTS-MARKER"
+    respx.post(COMPLETIONS).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": "answer", "reasoning": thoughts}}
+                ]
+            },
+        )
+    )
+    agent_id = await save_agent(session, thinking_level="HIGH")
+
+    reply = await agent_aware_service(session, http).send_message(
+        ChatRequest(message="Hi", agent_id=agent_id)
+    )
+
+    assert reply.reply == "answer"
+    stored = list(await session.scalars(select(Message.content)))
+    assert all(thoughts not in content for content in stored)
+    assert thoughts not in caplog.text

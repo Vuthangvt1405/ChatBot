@@ -2,13 +2,15 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from app.config import OpenRouterSettings, Settings
 from app.db import SessionDep
 from app.main import create_app
 from app.services import get_chat_service
+from app.services.agent_profiles import AgentProfileService
+from app.workspace import CurrentWorkspaceDep
 from tests.echo import EchoChatService
 
 
@@ -32,8 +34,12 @@ def make_settings(db_path: Path, **overrides) -> Settings:
 
 
 def use_echo_provider(app: FastAPI) -> None:
-    def echo(session: SessionDep) -> EchoChatService:
-        return EchoChatService(session)
+    def echo(
+        request: Request, session: SessionDep, workspace: CurrentWorkspaceDep
+    ) -> EchoChatService:
+        # STORY-01 (D21): wired like the real provider, so a message's agentId is checked too.
+        agents = AgentProfileService(session, request.app.state.settings.openrouter)
+        return EchoChatService(session, agents, workspace)
 
     app.dependency_overrides[get_chat_service] = echo
 

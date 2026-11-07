@@ -10,7 +10,12 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
-from app.errors import ChatProviderError, ConversationNotFoundError
+from app.errors import (
+    AGENT_NOT_FOUND_ERROR_CODE,
+    AgentNotFoundError,
+    ChatProviderError,
+    ConversationNotFoundError,
+)
 from app.schemas import MAX_MESSAGE_LENGTH, ChatRequest
 from app.services import ChatServiceDep
 
@@ -33,20 +38,32 @@ async def send(
     chat: ChatServiceDep,
     message: Annotated[str, Form()] = "",
     conversation_id: Annotated[str, Form()] = "",
+    agent_id: Annotated[str, Form()] = "",
 ) -> Response:
     """Returns the assistant's message as an <li>; the conversation id is in a header.
 
     US-6: a failure is only a status code with an empty body (404 conversation gone,
     502 provider unavailable, 500 anything else). The page picks the fixed text to show,
     so exception details never reach the visitor (BR-1).
+
+    STORY-01: `agent_id` is the agent selected on the page (AC14). An unknown or foreign
+    agent is 404 with header X-Error-Code: agent_not_found.
     """
     try:
-        chat_request = ChatRequest(message=message, conversation_id=conversation_id or None)
+        chat_request = ChatRequest(
+            message=message,
+            conversation_id=conversation_id or None,
+            agent_id=agent_id or None,
+        )
     except ValidationError:
         return Response(status_code=400)
 
     try:
         reply = await chat.send_message(chat_request)
+    except AgentNotFoundError:
+        # STORY-01 AC10: the page forgets the agent and shows its own fixed text.
+        logger.info("Chat send named an unknown agent %s", chat_request.agent_id)
+        return Response(status_code=404, headers={"X-Error-Code": AGENT_NOT_FOUND_ERROR_CODE})
     except Exception as exc:
         status = (
             404

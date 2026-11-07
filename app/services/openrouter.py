@@ -1,4 +1,5 @@
 import logging
+import uuid
 from collections.abc import Sequence
 
 import httpx
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import OpenRouterSettings
 from app.errors import ChatProviderError
 from app.models import Conversation, Message, MessageRole
+from app.services.agent_profiles import AgentProfileService, ChatAgent
 from app.services.base import ChatServiceBase
 
 logger = logging.getLogger(__name__)
@@ -34,18 +36,31 @@ class OpenRouterChatService(ChatServiceBase):
     """Sends the conversation to OpenRouter's /chat/completions endpoint and returns the reply."""
 
     def __init__(
-        self, session: AsyncSession, http: httpx.AsyncClient, settings: OpenRouterSettings
+        self,
+        session: AsyncSession,
+        http: httpx.AsyncClient,
+        settings: OpenRouterSettings,
+        agents: AgentProfileService,
+        workspace_id: uuid.UUID,
     ) -> None:
-        super().__init__(session)
+        super().__init__(session, agents, workspace_id)
         self._http = http
         self._settings = settings
 
-    async def generate_reply(self, conversation: Conversation, history: Sequence[Message]) -> str:
+    async def generate_reply(
+        self,
+        conversation: Conversation,
+        history: Sequence[Message],
+        agent: ChatAgent | None = None,
+    ) -> str:
         options = self._settings
+        # STORY-01 AC4: the selected agent's instructions and model, else the defaults.
+        system_prompt = agent.system_prompt if agent is not None else options.system_prompt
+        model = agent.model_id if agent is not None else options.model
         messages: list[dict[str, str]] = []
 
-        if options.system_prompt.strip():
-            messages.append({"role": MessageRole.SYSTEM, "content": options.system_prompt})
+        if system_prompt.strip():
+            messages.append({"role": MessageRole.SYSTEM, "content": system_prompt})
 
         max_history = max(1, options.max_history_messages)
         messages.extend({"role": m.role, "content": m.content} for m in history[-max_history:])
@@ -56,11 +71,13 @@ class OpenRouterChatService(ChatServiceBase):
         if options.app_name and options.app_name.strip():
             headers["X-Title"] = options.app_name
 
-        response = await self._post(
-            "chat/completions",
-            json={"model": options.model, "messages": messages},
-            headers=headers,
-        )
+        body: dict[str, object] = {"model": model, "messages": messages}
+        if agent is not None:
+            # STORY-01 AC13: how hard the model thinks. `exclude` keeps the thinking text out of
+            # the reply, so it's never shown, saved or logged (D4). No agent → no field, as before.
+            body["reasoning"] = {"effort": agent.thinking_level.value.lower(), "exclude": True}
+
+        response = await self._post("chat/completions", json=body, headers=headers)
 
         if not response.is_success:
             logger.error(
@@ -74,12 +91,12 @@ class OpenRouterChatService(ChatServiceBase):
             payload = response.json()
         except ValueError:
             # US-6 AC-8: garbage from the provider is an outage, not a crash.
-            logger.exception("OpenRouter sent an unreadable response for model %s.", options.model)
+            logger.exception("OpenRouter sent an unreadable response for model %s.", model)
             raise ChatProviderError(UNREADABLE_MESSAGE) from None
 
         content = _first_content(payload)
         if not content or not content.strip():
-            logger.error("OpenRouter returned an empty completion for model %s.", options.model)
+            logger.error("OpenRouter returned an empty completion for model %s.", model)
             raise ChatProviderError(EMPTY_MESSAGE)
 
         return content
