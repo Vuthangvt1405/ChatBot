@@ -1,0 +1,17 @@
+@host = http://localhost:5008
+@conversationId = 00000000-0000-0000-0000-000000000000
+
+GET {{host}}/health
+
+###
+POST {{host}}/api/chat
+Content-Type: application/json
+
+{
+  "message": "Hello! What can you do?"
+}
+
+###
+# Replace conversationId with the value returned by the POST above.
+GET {{host}}/api/chat/{{conversationId}}/messages
+Accept: application/json

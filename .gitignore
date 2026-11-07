@@ -1,0 +1,44 @@
+# Secrets (keep the example file)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Tool caches and reports
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.log
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+
+# Playwright artifacts
+test-results/
+playwright-report/
+
+# Claude Code: local config and packaged skill bundles
+.claude/
+*.skill
+
+# Editors / OS
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Shared agent skills (local only)
+.agents/

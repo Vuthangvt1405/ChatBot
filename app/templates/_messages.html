@@ -1,0 +1,3 @@
+{% for message in messages %}
+{% with role = message.role, text = message.content %}{% include "_message.html" %}{% endwith %}
+{% endfor %}

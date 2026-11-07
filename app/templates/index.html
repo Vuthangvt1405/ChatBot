@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chatbot</title>
+  <link rel="stylesheet" href="/static/chat.css">
+</head>
+<body>
+  <div class="layout">
+    {# US-7 Q5: left sidebar. Only holds "New chat" for now (no chat history yet). #}
+    <aside class="sidebar">
+      <button id="new-chat" type="button" class="sidebar-new-chat">New chat</button>
+    </aside>
+
+    <div class="chat">
+      <header class="chat-header">Chatbot</header>
+
+      <div id="chat-scroll" class="chat-scroll">
+        <div id="restore-indicator" class="typing restoring" role="status" hidden>Loading conversation<span class="dots"></span></div>
+        <div id="empty-state" class="empty">How can I help you today?</div>
+
+        <ol id="messages" class="messages" aria-live="polite"></ol>
+
+        <div id="typing-indicator" class="typing" role="status" hidden>Assistant is typing<span class="dots"></span></div>
+      </div>
+
+      <div class="composer-wrap">
+        <form id="chat-form" class="composer"
+              hx-post="/ui/send" hx-target="#messages" hx-swap="beforeend" hx-sync="this:drop">
+          <input type="hidden" id="conversation-id" name="conversation_id" value="">
+          <textarea id="chat-input" name="message" rows="1" class="composer-input"
+                    aria-label="Message" placeholder="Message Chatbot"></textarea>
+          <button type="submit" class="send" aria-label="Send" disabled>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/>
+            </svg>
+          </button>
+        </form>
+        <div class="composer-footer">
+          <p id="chat-error" class="hint-error" role="alert" hidden>Message must be {{ max_length }} characters or fewer</p>
+          <p id="chat-hint" class="hint">Enter to send · Shift+Enter for a new line</p>
+          <span id="char-count" class="counter" hidden></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/chat.js" data-max-length="{{ max_length }}"></script>
+</body>
+</html>
